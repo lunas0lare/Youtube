@@ -50,18 +50,29 @@ x-airflow-common:
   # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
   # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
   # build: .
+  
+  #use custom image on top of default airflow image(default: apache.airflow:2.9.2)
+  image: ${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPOSITORY}:${IMAGE_TAG}
+   
+  #use the .env file to get the connection params and variables 
   env_file:
     - .env
   environment:
     &airflow-common-env
+
+
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    #use SQLAlchemy to connect to airflow's metadata postgresql using psycopg2 driver
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${META_DATA_USERNAME}:${META_DATA_PASSWORD}@${POSTGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${META_DATA_NAME}
+    #postgresql backend store task results executed by celery worker.
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${CELERY_BACKEND_USERNAME}:${CELERY_BACKEND_PASSWORD}@${POSGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${CELERY_BACKEND_NAME}
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: ''
+    #key for encrypting data
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
+    #this is for loading example DAGs, it was true so we set it false.
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
@@ -73,11 +84,38 @@ x-airflow-common:
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+
+    #NOTE: variable starts with AIRFLOW_VAR_ can use functions like Variable.get()
+    #NOTE: connection is a saved config thet tells airflow how to talk to an external system.
+    #it contains all the info needed to connect to something external
+    #connection can be written as URI:
+    #AIRFLOW_CONN_{CONN_ID}:'my-conn-type://login:password@host:port/name'
+
+    #connection to an external PostgreSQL database to store data from ELT process.
+    AIRFLOW_CONN_POSTGRESQL_DB_YT_ELT: '${ELT_DATABASE_USERNAME}:${ELT_DATABASE_PASSWORD}@${POSTGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${ELT_DATABASE_NAME}'
+    #variables can be written as follows:
+    #AIRFLOW_VAR_{VARIABLE_NAME}
+    AIRFLOW_VAR_API_KEY: ${API_KEY}
+    AIRFLOW_VAR_CHANNEL_HANDLE: ${CHANNEL_HANDLE}
+
+    #POSTGRES database environment variables - Needed for integration and data quality test
+
+    ELT_DATABASE_NAME: ${ELT_DATABASE_NAME}
+    ELT_DATABASE_USERNAME: ${ELT_DATABASE_USERNAME}
+    ELT_DATABASE_PASSWORD: ${ELT_DATABASE_PASSWORD}
+    POSTGRESQL_CONN_HOST: ${POSTGRES_CONN_HOST}
+    POSTGRESQL_CONN_PORT: ${POSTGRES_CONN_PORT}
   volumes:
-    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
-    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
-    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
-    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+  #use to mount data from our laptop to docker container
+  #Docker persistent data stores for container, when created it stored these data in the docker host
+  #when docker container is down, the data is still be saved in our computer through the files in the left
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+    - ./tests:/opt/airflow/tests
+    - ./data:/opt/airflow/data
+    - ./include:/opt/airflow/include
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -88,13 +126,27 @@ x-airflow-common:
 
 services:
   postgres:
+  #add a container name, if not it will default into the folder name (YOUTUBE)
+    container_name: postgres
     image: postgres:16
+    #add env_file to read the variables from the file
+    env_file:
+      - .env
+    
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      POSTGRES_USER: ${POSTGRES_CONN_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_CONN_PASSWORD}
+      # POSTGRES_DB: airflow
+    # creating port left port is port on laptop, right is default port in docker container
+    #which mean we are mapping the port from our lap to the postgresql port in docker container.
+    port:
+      - 5432:${POSTGRESQL_CONN_PORT}
     volumes:
+    #this ensure data persistent through a named volume
+    #which mean we creating a volume on our laptop that contain all data related to postgres databases(metadata, celery and data from yt api) to the var/lib/...
+    #this variable ensure data persistent because if our container drops, our data in postgres will still be there in our laptop through the variable
       - postgres-db-volume:/var/lib/postgresql/data
+      - ./docker/postgres/init-databases.sh:/docket-entrypoint-initdb.d/init-multiple-database.sh
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -188,20 +240,20 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  airflow-triggerer:
-    <<: *airflow-common
-    command: triggerer
-    healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: always
-    depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
+  # airflow-triggerer:
+  #   <<: *airflow-common
+  #   command: triggerer
+  #   healthcheck:
+  #     test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
+  #   restart: always
+  #   depends_on:
+  #     <<: *airflow-common-depends-on
+  #     airflow-init:
+  #       condition: service_completed_successfully
 
   airflow-init:
     <<: *airflow-common
@@ -290,8 +342,9 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      #set up the airflow username and password to init airflow
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_WWW_USER_USERNAME}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_WWW_USER_PASSWORD}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
 
@@ -313,24 +366,24 @@ services:
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
   # See: https://docs.docker.com/compose/profiles/
-  flower:
-    <<: *airflow-common
-    command: celery flower
-    profiles:
-      - flower
-    ports:
-      - "5555:5555"
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: always
-    depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
+  # flower:
+  #   <<: *airflow-common
+  #   command: celery flower
+  #   profiles:
+  #     - flower
+  #   ports:
+  #     - "5555:5555"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
+  #   restart: always
+  #   depends_on:
+  #     <<: *airflow-common-depends-on
+  #     airflow-init:
+  #       condition: service_completed_successfully
 
 volumes:
   postgres-db-volume:
