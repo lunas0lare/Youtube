@@ -3,11 +3,13 @@ import json
 from datetime import date
 import os
 from dotenv import load_dotenv
-from airflow.decorator import task
+# from airflow.decorator import task
+
+load_dotenv(dotenv_path="./.env")
 channels = "MrBeast"
 max_result = 50
 batch_size = 50
-API_keys = "AIzaSyDA7iBNSNCmnWSJSLrTRUJOcoxtQ4yGlrs"
+API_keys = os.getenv("API_KEY")
 playlist_id = ""
 url_channel = f"https://youtube.googleapis.com/youtube/v3/channels?part=contentDetails&forHandle={channels}&key={API_keys}"
 
@@ -128,6 +130,3 @@ if __name__ == "__main__":
     video_ids = get_video_id(channel_playlist_id)
     video_data = get_content_video(video_ids)
     save_to_json(video_data)
-
-a = (3, 4, 5)
-a.append(1)

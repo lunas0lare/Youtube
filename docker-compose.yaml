@@ -136,6 +136,17 @@ services:
     environment:
      - POSTGRES_USER=${POSTGRES_CONN_USERNAME}
      - POSTGRES_PASSWORD=${POSTGRES_CONN_PASSWORD}
+     - METADATA_DATABASE_NAME=${METADATA_DATABASE_NAME}
+     - METADATA_DATABASE_USERNAME=${METADATA_DATABASE_USERNAME}
+     - METADATA_DATABASE_PASSWORD=${METADATA_DATABASE_PASSWORD}
+     - ELT_DATABASE_NAME=${ELT_DATABASE_NAME}
+     - ELT_DATABASE_USERNAME=${ELT_DATABASE_USERNAME}
+     - ELT_DATABASE_PASSWORD=${ELT_DATABASE_PASSWORD}
+     - CELERY_BACKEND_NAME=${CELERY_BACKEND_NAME}
+     - CELERY_BACKEND_USERNAME=${CELERY_BACKEND_USERNAME}
+     - CELERY_BACKEND_PASSWORD=${CELERY_BACKEND_PASSWORD}
+     - POSTGRES_CONN_HOST=${POSTGRES_CONN_HOST}
+     - POSTGRES_CONN_PORT=${POSTGRES_CONN_PORT}
       # POSTGRES_DB: airflow
     # creating port left port is port on laptop, right is default port in docker container
     #which mean we are mapping the port from our lap to the postgresql port in docker container.
@@ -146,7 +157,7 @@ services:
     #which mean we creating a volume on our laptop that contain all data related to postgres databases(metadata, celery and data from yt api) to the var/lib/...
     #this variable ensure data persistent because if our container drops, our data in postgres will still be there in our laptop through the variable
       - postgres-db-volume:/var/lib/postgresql/data
-      - ./docker/postgres/init-multiple-databases.sh:/docket-entrypoint-initdb.d/init-multiple-databases.sh
+      - ./docker/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
     healthcheck:
     #ADD POSTGRES AND METADATA TO CHECK
       test: ["CMD", "pg_isready", "-U","${POSTGRES_CONN_USERNAME}", '-d',"${METADATA_DATABASE_NAME}" ]
@@ -353,7 +364,8 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_WWW_USER_PASSWORD}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
-
+    volumes:
+    - .:/sources
   airflow-cli:
     <<: *airflow-common
     profiles:
