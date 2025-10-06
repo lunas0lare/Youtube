@@ -64,9 +64,9 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     #use SQLAlchemy to connect to airflow's metadata postgresql using psycopg2 driver
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${META_DATA_USERNAME}:${META_DATA_PASSWORD}@${POSTGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${META_DATA_NAME}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${METADATA_DATABASE_USERNAME}:${METADATA_DATABASE_PASSWORD}@${POSTGRES_CONN_HOST}:${POSTGRES_CONN_PORT}/${METADATA_DATABASE_NAME}
     #postgresql backend store task results executed by celery worker.
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${CELERY_BACKEND_USERNAME}:${CELERY_BACKEND_PASSWORD}@${POSGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${CELERY_BACKEND_NAME}
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${CELERY_BACKEND_USERNAME}:${CELERY_BACKEND_PASSWORD}@${POSTGRES_CONN_HOST}:${POSTGRES_CONN_PORT}/${CELERY_BACKEND_NAME}
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     #key for encrypting data
     AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
@@ -79,7 +79,7 @@ x-airflow-common:
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
     # yamllint enable rule:line-length
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
+    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option O/NLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     # The following line can be used to set a custom config file, stored in the local config folder
@@ -92,7 +92,7 @@ x-airflow-common:
     #AIRFLOW_CONN_{CONN_ID}:'my-conn-type://login:password@host:port/name'
 
     #connection to an external PostgreSQL database to store data from ELT process.
-    AIRFLOW_CONN_POSTGRESQL_DB_YT_ELT: '${ELT_DATABASE_USERNAME}:${ELT_DATABASE_PASSWORD}@${POSTGRESQL_CONN_HOST}:${POSTGRESQL_CONN_PORT}/${ELT_DATABASE_NAME}'
+    AIRFLOW_CONN_POSTGRESQL_DB_YT_ELT: '${ELT_DATABASE_USERNAME}:${ELT_DATABASE_PASSWORD}@${POSTGRES_CONN_HOST}:${POSTGRES_CONN_PORT}/${ELT_DATABASE_NAME}'
     #variables can be written as follows:
     #AIRFLOW_VAR_{VARIABLE_NAME}
     AIRFLOW_VAR_API_KEY: ${API_KEY}
@@ -134,21 +134,22 @@ services:
       - .env
     
     environment:
-      POSTGRES_USER: ${POSTGRES_CONN_USERNAME}
-      POSTGRES_PASSWORD: ${POSTGRES_CONN_PASSWORD}
+     - POSTGRES_USER=${POSTGRES_CONN_USERNAME}
+     - POSTGRES_PASSWORD=${POSTGRES_CONN_PASSWORD}
       # POSTGRES_DB: airflow
     # creating port left port is port on laptop, right is default port in docker container
     #which mean we are mapping the port from our lap to the postgresql port in docker container.
-    port:
-      - 5432:${POSTGRESQL_CONN_PORT}
+    ports:
+      - 5432:5432
     volumes:
     #this ensure data persistent through a named volume
     #which mean we creating a volume on our laptop that contain all data related to postgres databases(metadata, celery and data from yt api) to the var/lib/...
     #this variable ensure data persistent because if our container drops, our data in postgres will still be there in our laptop through the variable
       - postgres-db-volume:/var/lib/postgresql/data
-      - ./docker/postgres/init-databases.sh:/docket-entrypoint-initdb.d/init-multiple-database.sh
+      - ./docker/postgres/init-multiple-databases.sh:/docket-entrypoint-initdb.d/init-multiple-databases.sh
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+    #ADD POSTGRES AND METADATA TO CHECK
+      test: ["CMD", "pg_isready", "-U","${POSTGRES_CONN_USERNAME}", '-d',"${METADATA_DATABASE_NAME}" ]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -168,13 +169,15 @@ services:
       start_period: 30s
     restart: always
 
-  airflow-apiserver:
+  #change apiserver to webserver because airflow 3.0 uses web instead of api
+  airflow-webserver:
     <<: *airflow-common
-    command: api-server
+    command: webserver
+    container_name: airflow-webserver
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -188,6 +191,9 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+
+    #name container
+    container_name: airflow_scheduler
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
@@ -218,6 +224,7 @@ services:
   airflow-worker:
     <<: *airflow-common
     command: celery worker
+    container_name: airflow_worker
     healthcheck:
       # yamllint disable rule:line-length
       test:
@@ -235,8 +242,6 @@ services:
     restart: always
     depends_on:
       <<: *airflow-common-depends-on
-      airflow-apiserver:
-        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
 
@@ -258,6 +263,7 @@ services:
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
+    container_name: airflow_init
     # yamllint disable rule:line-length
     command:
       - -c

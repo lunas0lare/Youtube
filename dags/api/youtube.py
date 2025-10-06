@@ -1,7 +1,10 @@
 import requests
 import json
 from datetime import date
-channels = "PopularMMOs"
+import os
+from dotenv import load_dotenv
+from airflow.decorator import task
+channels = "MrBeast"
 max_result = 50
 batch_size = 50
 API_keys = "AIzaSyDA7iBNSNCmnWSJSLrTRUJOcoxtQ4yGlrs"
@@ -21,6 +24,7 @@ def write_file(file_name, input):
             f.write(str(input[i]) + '\n')
         f.close()
 
+@task
 def get_playlist_id():
     try:
         response = requests.get(url_channel)
@@ -36,7 +40,7 @@ def get_playlist_id():
 
     except requests.exceptions.RequestException as e:
         raise e
-
+@task
 def get_video_id(playlist_id):
     video_ids = []
     next_page_token = None
@@ -64,7 +68,7 @@ def get_video_id(playlist_id):
     except requests.exceptions.RequestException as e:
         raise e
 
-
+@task
 def batch_video_ids(video_ids, batch_size):
     for video in range(0, len(video_ids), batch_size):
         # 'yield' returns this slice to the caller,
@@ -73,7 +77,7 @@ def batch_video_ids(video_ids, batch_size):
         # yield: 0->50; next call function: yield 51->100...
         yield video_ids[video : video + batch_size]
 
-
+@task
 def get_content_video(video_ids):
     
     try:  
@@ -111,6 +115,7 @@ def get_content_video(video_ids):
     except requests.exceptions.RequestException as e:
         raise e
 
+@task
 def save_to_json(extracted_data):
     file_path = f"./data/YT_Data_{date.today()}.json"
     with open(file_path, 'w', encoding = 'utf-8') as f:
