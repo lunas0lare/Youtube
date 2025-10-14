@@ -1,15 +1,16 @@
 import requests
 import json
 from datetime import date
-import os
-from dotenv import load_dotenv
+# import os
+# from dotenv import load_dotenv
 # from airflow.decorator import task
-
-load_dotenv(dotenv_path="./.env")
-channels = "MrBeast"
+from airflow.decorators import task
+from airflow.models import Variable
+# load_dotenv(dotenv_path="./.env")
+channels = Variable.get("CHANNEL_HANDLE")
 max_result = 50
 batch_size = 50
-API_keys = os.getenv("API_KEY")
+API_keys = Variable.get("API_KEY")
 playlist_id = ""
 url_channel = f"https://youtube.googleapis.com/youtube/v3/channels?part=contentDetails&forHandle={channels}&key={API_keys}"
 
@@ -71,19 +72,17 @@ def get_video_id(playlist_id):
         raise e
 
 @task
-def batch_video_ids(video_ids, batch_size):
-    for video in range(0, len(video_ids), batch_size):
-        # 'yield' returns this slice to the caller,
-        # but instead of ending the function, it pauses here.
-        # The function will resume from this line on the next iteration.
-        # yield: 0->50; next call function: yield 51->100...
-        yield video_ids[video : video + batch_size]
-
-@task
 def get_content_video(video_ids):
-    
+    extracted_data = []
+    def batch_video_ids(video_ids, batch_size):
+        for video in range(0, len(video_ids), batch_size):
+            # 'yield' returns this slice to the caller,
+            # but instead of ending the function, it pauses here.
+            # The function will resume from this line on the next iteration.
+            # yield: 0->50; next call function: yield 51->100...
+            yield video_ids[video : video + batch_size]
+            
     try:  
-        extracted_data = []
         for i in range(0, len(video_ids), batch_size):
             res = batch_video_ids(video_ids, batch_size)
 
