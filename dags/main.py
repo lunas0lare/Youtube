@@ -1,3 +1,5 @@
+#this file is to create the DAG and the tasks for airflow to run
+
 from airflow import DAG
 import pendulum
 from datetime import datetime, timedelta

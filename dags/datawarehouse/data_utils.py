@@ -1,5 +1,5 @@
 ##contain functions relating to database connections and operations like createing tables and schema
-
+#this file used to create connection to postgres , create table and schema in postgres and extract video_ids
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from psycopg2.extras import RealDictCursor #this helps return the data as a dict instead of a tuple from normal curror
 from airflow.models import Variable
